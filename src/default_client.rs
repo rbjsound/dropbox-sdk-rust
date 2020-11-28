@@ -13,11 +13,12 @@
 
 use crate::Error;
 use crate::client_trait::*;
+use crate::common::NamespaceId;
 
 const USER_AGENT: &str = concat!("Dropbox-APIv2-Rust/", env!("CARGO_PKG_VERSION"));
 
 macro_rules! forward_request {
-    ($self:ident, $inner:expr, $token:expr, $team_select:expr) => {
+    ($self:ident, $inner:expr, $token:expr, $team_select:expr, $namespace_id: expr) => {
         fn request(
             &$self,
             endpoint: Endpoint,
@@ -30,7 +31,7 @@ macro_rules! forward_request {
             range_end: Option<u64>,
         ) -> crate::Result<HttpRequestResultRaw> {
             $inner.request(endpoint, style, function, params, params_type, body, range_start,
-                range_end, $token, $team_select)
+                range_end, $token, $team_select, $namespace_id)
         }
     }
 }
@@ -39,6 +40,7 @@ macro_rules! forward_request {
 pub struct UserAuthDefaultClient {
     inner: UreqClient,
     token: String,
+    namespace_id: Option<NamespaceId>,
 }
 
 impl UserAuthDefaultClient {
@@ -47,12 +49,18 @@ impl UserAuthDefaultClient {
         Self {
             inner: UreqClient::default(),
             token,
+            namespace_id: None,
         }
+    }
+
+    /// Set a namespace_id as the path root for future requests.
+    pub fn namespace_id(&mut self, namespace_id: Option<NamespaceId>) {
+        self.namespace_id = namespace_id;
     }
 }
 
 impl HttpClient for UserAuthDefaultClient {
-    forward_request! { self, self.inner, Some(&self.token), None }
+    forward_request! { self, self.inner, Some(&self.token), None, self.namespace_id.as_ref() }
 }
 
 impl UserAuthClient for UserAuthDefaultClient {}
@@ -81,7 +89,7 @@ impl TeamAuthDefaultClient {
 }
 
 impl HttpClient for TeamAuthDefaultClient {
-    forward_request! { self, self.inner, Some(&self.token), self.team_select.as_ref() }
+    forward_request! { self, self.inner, Some(&self.token), self.team_select.as_ref(), None }
 }
 
 impl TeamAuthClient for TeamAuthDefaultClient {}
@@ -93,7 +101,7 @@ pub struct NoauthDefaultClient {
 }
 
 impl HttpClient for NoauthDefaultClient {
-    forward_request! { self, self.inner, None, None }
+    forward_request! { self, self.inner, None, None, None }
 }
 
 impl NoauthClient for NoauthDefaultClient {}
@@ -115,6 +123,7 @@ impl UreqClient {
         range_end: Option<u64>,
         token: Option<&str>,
         team_select: Option<&TeamSelect>,
+        namespace_id: Option<&NamespaceId>,
     ) -> crate::Result<HttpRequestResultRaw> {
 
         let url = endpoint.url().to_owned() + function;
@@ -132,6 +141,11 @@ impl UreqClient {
                 TeamSelect::User(id) => { req.set("Dropbox-API-Select-User", id); }
                 TeamSelect::Admin(id) => { req.set("Dropbox-API-Select-Admin", id); }
             }
+        }
+
+        if let Some(namespace_id) = namespace_id {
+            let namespace_tag = format!(r#"{{".tag": "namespace_id", "namespace_id": "{}"}}"#, namespace_id);
+            req.set("Dropbox-API-Path-Root", &namespace_tag);
         }
 
         match (range_start, range_end) {
